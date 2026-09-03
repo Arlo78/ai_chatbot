@@ -1,5 +1,4 @@
 import 'package:ai_chatbot/data/chat_message_model.dart';
-import 'package:ai_chatbot/utils/constants.dart';
 import 'package:ai_chatbot/utils/message_sender_enum.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -13,7 +12,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   // Replace with your actual Gemini API key
-  static final _apiKey = dotenv.env['API_KEY'] ?? 'Chiave non trovata';
+  static final _apiKey = dotenv.env['API_KEY'] ?? 'API_KEY_NOT_FOUND';
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
@@ -24,7 +23,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialise Gemini with the gemini-pro model
+    // Initialise Gemini with the gemini-3.6-flash model
     _model = GenerativeModel(model: 'gemini-3.6-flash', apiKey: _apiKey);
     // Start a chat session — this remembers conversation history
     _chat = _model.startChat(
@@ -87,12 +86,8 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         _isLoading = false;
       });
-    } catch (e, s) {
+    } catch (e) {
       // Stampa l'errore reale nella console di debug di VS Code o Android Studio
-      print('--- ERRORE GEMINI API ---');
-      print(e);
-      print(s);
-      print('-------------------------');
 
       setState(() {
         _messages.add(
@@ -252,7 +247,7 @@ class _ChatScreenState extends State<ChatScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
