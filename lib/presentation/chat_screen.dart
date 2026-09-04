@@ -1,8 +1,10 @@
 import 'package:ai_chatbot/data/chat_message_model.dart';
+import 'package:ai_chatbot/presentation/chat_cubit.dart';
+import 'package:ai_chatbot/presentation/chat_state.dart';
 import 'package:ai_chatbot/utils/message_sender_enum.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:google_generative_ai/google_generative_ai.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -11,41 +13,15 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  // Replace with your actual Gemini API key
-  static final _apiKey = dotenv.env['API_KEY'] ?? 'API_KEY_NOT_FOUND';
+  static String get _apiKey {
+    try {
+      return dotenv.env['API_KEY'] ?? 'API_KEY_NOT_FOUND';
+    } catch (_) {
+      return 'API_KEY_NOT_FOUND';
+    }
+  }
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final List<ChatMessage> _messages = [];
-  bool _isLoading = false;
-  // Set up the Gemini model
-  late final GenerativeModel _model;
-  late final ChatSession _chat;
-  @override
-  void initState() {
-    super.initState();
-    // Initialise Gemini with the gemini-3.6-flash model
-    _model = GenerativeModel(model: 'gemini-3.6-flash', apiKey: _apiKey);
-    // Start a chat session — this remembers conversation history
-    _chat = _model.startChat(
-      history: [
-        Content.text(
-          'You are a helpful Flutter development assistant. '
-          'Answer questions clearly and concisely. '
-          'When showing code, use Dart/Flutter syntax.',
-        ),
-      ],
-    );
-    // Add a welcome message from the AI
-    _messages.add(
-      ChatMessage(
-        text:
-            'Hello! I\'m your Flutter AI assistant. '
-            'Ask me anything about Flutter, Dart, or mobile development!',
-        sender: MessageSender.ai,
-        timestamp: DateTime.now(),
-      ),
-    );
-  }
 
   @override
   void dispose() {
@@ -54,54 +30,9 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  // Send a message to Gemini and get a response
-  Future<void> _sendMessage() async {
-    final userInput = _controller.text.trim();
-    if (userInput.isEmpty) return;
-    // Add user's message to the chat
-    setState(() {
-      _messages.add(
-        ChatMessage(
-          text: userInput,
-          sender: MessageSender.user,
-          timestamp: DateTime.now(),
-        ),
-      );
-      _isLoading = true;
-    });
+  Future<void> _sendMessage(BuildContext context) async {
+    await context.read<ChatCubit>().sendMessage(_controller.text);
     _controller.clear();
-    _scrollToBottom();
-    try {
-      // Send message to Gemini
-      final response = await _chat.sendMessage(Content.text(userInput));
-      final aiText = response.text ?? 'Sorry, I could not generate a response.';
-      // Add AI response to the chat
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            text: aiText,
-            sender: MessageSender.ai,
-            timestamp: DateTime.now(),
-          ),
-        );
-        _isLoading = false;
-      });
-    } catch (e) {
-      // Stampa l'errore reale nella console di debug di VS Code o Android Studio
-
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            text:
-                'Error: ${e.toString()}', // Mostra l'errore reale anche in UI per test
-            sender: MessageSender.ai,
-            timestamp: DateTime.now(),
-          ),
-        );
-        _isLoading = false;
-      });
-    }
-    _scrollToBottom();
   }
 
   // Scroll to the latest message automatically
@@ -119,65 +50,70 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: Colors.deepPurple,
-              radius: 16,
-              child: Icon(Icons.auto_awesome, color: Colors.white, size: 16),
-            ),
-            SizedBox(width: 10),
-            Text('AI Assistant'),
-          ],
-        ),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Column(
-        children: [
-          // Chat messages list
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(16),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                return _buildMessageBubble(_messages[index]);
-              },
-            ),
-          ),
-          // Loading indicator when AI is thinking
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
+    return BlocProvider(
+      create: (_) => ChatCubit(apiKey: _apiKey),
+      child: BlocConsumer<ChatCubit, ChatState>(
+        listener: (_, __) => _scrollToBottom(),
+        builder: (context, state) {
+          return Scaffold(
+            appBar: AppBar(
+              title: const Row(
                 children: [
                   CircleAvatar(
                     backgroundColor: Colors.deepPurple,
-                    radius: 14,
+                    radius: 16,
                     child: Icon(
                       Icons.auto_awesome,
                       color: Colors.white,
-                      size: 14,
+                      size: 16,
                     ),
                   ),
-                  SizedBox(width: 8),
-                  Text(
-                    'AI is thinking...',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  SizedBox(width: 8),
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  SizedBox(width: 10),
+                  Text('AI Assistant'),
                 ],
               ),
+              backgroundColor: Theme.of(context).colorScheme.inversePrimary,
             ),
-          // Message input bar
-          _buildInputBar(),
+            body: Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: state.messages.length,
+                    itemBuilder: (context, index) {
+                      return _buildMessageBubble(state.messages[index]);
+                    },
+                  ),
+                ),
+                if (state.isLoading) _buildLoadingIndicator(),
+                _buildInputBar(context, state.isLoading),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLoadingIndicator() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: Colors.deepPurple,
+            radius: 14,
+            child: Icon(Icons.auto_awesome, color: Colors.white, size: 14),
+          ),
+          SizedBox(width: 8),
+          Text('AI is thinking...', style: TextStyle(color: Colors.grey)),
+          SizedBox(width: 8),
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
         ],
       ),
     );
@@ -240,7 +176,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // Builds the text input bar at the bottom
-  Widget _buildInputBar() {
+  Widget _buildInputBar(BuildContext context, bool isLoading) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -272,13 +208,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     vertical: 12,
                   ),
                 ),
-                onSubmitted: (_) => _sendMessage(),
+                onSubmitted: (_) => _sendMessage(context),
                 maxLines: null,
               ),
             ),
             const SizedBox(width: 8),
             FloatingActionButton.small(
-              onPressed: _isLoading ? null : _sendMessage,
+              onPressed: isLoading ? null : () => _sendMessage(context),
               backgroundColor: Colors.deepPurple,
               child: const Icon(Icons.send, color: Colors.white, size: 18),
             ),
