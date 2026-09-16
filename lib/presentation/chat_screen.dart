@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:ai_chatbot/data/chat_message_model.dart';
 import 'package:ai_chatbot/presentation/chat_cubit.dart';
 import 'package:ai_chatbot/presentation/chat_state.dart';
@@ -6,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -14,6 +18,8 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const _avatarPreferenceKey = 'user_avatar';
+
   static String get _apiKey {
     try {
       return dotenv.env['API_KEY'] ?? 'API_KEY_NOT_FOUND';
@@ -25,6 +31,26 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _imagePicker = ImagePicker();
+  Uint8List? _userAvatarBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserAvatar();
+  }
+
+  Future<void> _loadUserAvatar() async {
+    final preferences = await SharedPreferences.getInstance();
+    final encodedAvatar = preferences.getString(_avatarPreferenceKey);
+    if (encodedAvatar == null || !mounted) return;
+
+    try {
+      final avatarBytes = base64Decode(encodedAvatar);
+      setState(() => _userAvatarBytes = avatarBytes);
+    } on FormatException {
+      await preferences.remove(_avatarPreferenceKey);
+    }
+  }
 
   @override
   void dispose() {
@@ -80,6 +106,50 @@ class _ChatScreenState extends State<ChatScreen> {
     if (source != null && context.mounted) {
       await _pickImage(context, source);
     }
+  }
+
+  Future<void> _pickUserAvatar(ImageSource source) async {
+    final image = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 85,
+      maxWidth: 512,
+    );
+    if (image == null || !mounted) return;
+
+    final avatarBytes = await image.readAsBytes();
+    if (!mounted) return;
+    setState(() => _userAvatarBytes = avatarBytes);
+
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(
+      _avatarPreferenceKey,
+      base64Encode(avatarBytes),
+    );
+  }
+
+  Future<void> _showAvatarSourcePicker() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Take a photo'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Choose from gallery'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (source != null) await _pickUserAvatar(source);
   }
 
   // Scroll to the latest message automatically
@@ -228,10 +298,27 @@ class _ChatScreenState extends State<ChatScreen> {
           // User avatar
           if (isUser) ...[
             const SizedBox(width: 8),
-            const CircleAvatar(
-              backgroundColor: Colors.grey,
-              radius: 14,
-              child: Icon(Icons.person, color: Colors.white, size: 14),
+            GestureDetector(
+              onTap: _showAvatarSourcePicker,
+              child: Tooltip(
+                message: 'Change your avatar',
+                child: CircleAvatar(
+                  backgroundColor: Colors.grey,
+                  radius: 14,
+                  backgroundImage:
+                      _userAvatarBytes == null
+                          ? null
+                          : MemoryImage(_userAvatarBytes!),
+                  child:
+                      _userAvatarBytes == null
+                          ? const Icon(
+                            Icons.person,
+                            color: Colors.white,
+                            size: 14,
+                          )
+                          : null,
+                ),
+              ),
             ),
           ],
         ],
