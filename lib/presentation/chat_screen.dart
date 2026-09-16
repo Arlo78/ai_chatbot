@@ -1,15 +1,17 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:ai_chatbot/data/chat_message_model.dart';
 import 'package:ai_chatbot/presentation/chat_cubit.dart';
 import 'package:ai_chatbot/presentation/chat_state.dart';
+import 'package:ai_chatbot/presentation/profile_cubit.dart';
+import 'package:ai_chatbot/presentation/profile_state.dart';
 import 'package:ai_chatbot/utils/message_sender_enum.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+enum _AvatarAction { camera, gallery, remove }
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -18,8 +20,6 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  static const _avatarPreferenceKey = 'user_avatar';
-
   static String get _apiKey {
     try {
       return dotenv.env['API_KEY'] ?? 'API_KEY_NOT_FOUND';
@@ -31,26 +31,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _imagePicker = ImagePicker();
-  Uint8List? _userAvatarBytes;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadUserAvatar();
-  }
-
-  Future<void> _loadUserAvatar() async {
-    final preferences = await SharedPreferences.getInstance();
-    final encodedAvatar = preferences.getString(_avatarPreferenceKey);
-    if (encodedAvatar == null || !mounted) return;
-
-    try {
-      final avatarBytes = base64Decode(encodedAvatar);
-      setState(() => _userAvatarBytes = avatarBytes);
-    } on FormatException {
-      await preferences.remove(_avatarPreferenceKey);
-    }
-  }
 
   @override
   void dispose() {
@@ -108,28 +88,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickUserAvatar(ImageSource source) async {
+  Future<void> _pickUserAvatar(
+    BuildContext providerContext,
+    ImageSource source,
+  ) async {
     final image = await _imagePicker.pickImage(
       source: source,
       imageQuality: 85,
       maxWidth: 512,
     );
-    if (image == null || !mounted) return;
+    if (image == null || !providerContext.mounted) return;
 
     final avatarBytes = await image.readAsBytes();
-    if (!mounted) return;
-    setState(() => _userAvatarBytes = avatarBytes);
-
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(
-      _avatarPreferenceKey,
-      base64Encode(avatarBytes),
-    );
+    if (!providerContext.mounted) return;
+    await providerContext.read<ProfileCubit>().setAvatar(avatarBytes);
   }
 
-  Future<void> _showAvatarSourcePicker() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
+  Future<void> _showAvatarSourcePicker(BuildContext providerContext) async {
+    final hasAvatar =
+        providerContext.read<ProfileCubit>().state.avatarBytes != null;
+    final action = await showModalBottomSheet<_AvatarAction>(
+      context: providerContext,
       builder: (context) {
         return SafeArea(
           child: Wrap(
@@ -137,19 +116,34 @@ class _ChatScreenState extends State<ChatScreen> {
               ListTile(
                 leading: const Icon(Icons.camera_alt),
                 title: const Text('Take a photo'),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
+                onTap: () => Navigator.pop(context, _AvatarAction.camera),
               ),
               ListTile(
                 leading: const Icon(Icons.photo_library),
                 title: const Text('Choose from gallery'),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
+                onTap: () => Navigator.pop(context, _AvatarAction.gallery),
               ),
+              if (hasAvatar)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('Remove avatar'),
+                  onTap: () => Navigator.pop(context, _AvatarAction.remove),
+                ),
             ],
           ),
         );
       },
     );
-    if (source != null) await _pickUserAvatar(source);
+    if (action == null || !providerContext.mounted) return;
+
+    switch (action) {
+      case _AvatarAction.camera:
+        await _pickUserAvatar(providerContext, ImageSource.camera);
+      case _AvatarAction.gallery:
+        await _pickUserAvatar(providerContext, ImageSource.gallery);
+      case _AvatarAction.remove:
+        await providerContext.read<ProfileCubit>().removeAvatar();
+    }
   }
 
   // Scroll to the latest message automatically
@@ -167,46 +161,64 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => ChatCubit(apiKey: _apiKey),
-      child: BlocConsumer<ChatCubit, ChatState>(
-        listener: (_, __) => _scrollToBottom(),
-        builder: (context, state) {
-          return Scaffold(
-            appBar: AppBar(
-              title: const Row(
-                children: [
-                  CircleAvatar(
-                    backgroundColor: Colors.deepPurple,
-                    radius: 16,
-                    child: Icon(
-                      Icons.auto_awesome,
-                      color: Colors.white,
-                      size: 16,
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (_) => ChatCubit(apiKey: _apiKey)),
+        BlocProvider(create: (_) => ProfileCubit()),
+      ],
+      child: BlocBuilder<ProfileCubit, ProfileState>(
+        builder: (context, profileState) {
+          return BlocConsumer<ChatCubit, ChatState>(
+            listener: (_, __) => _scrollToBottom(),
+            builder: (context, state) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.deepPurple,
+                        radius: 16,
+                        child: Icon(
+                          Icons.auto_awesome,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Text('AI Assistant'),
+                    ],
+                  ),
+                  backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+                  actions: [
+                    IconButton(
+                      onPressed: () => _showAvatarSourcePicker(context),
+                      tooltip: 'Change your avatar',
+                      icon: _buildUserAvatar(profileState.avatarBytes),
                     ),
-                  ),
-                  SizedBox(width: 10),
-                  Text('AI Assistant'),
-                ],
-              ),
-              backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-            ),
-            body: Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: state.messages.length,
-                    itemBuilder: (context, index) {
-                      return _buildMessageBubble(state.messages[index]);
-                    },
-                  ),
+                    const SizedBox(width: 8),
+                  ],
                 ),
-                if (state.isLoading) _buildLoadingIndicator(),
-                _buildInputBar(context, state.isLoading),
-              ],
-            ),
+                body: Column(
+                  children: [
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: state.messages.length,
+                        itemBuilder: (context, index) {
+                          return _buildMessageBubble(
+                            state.messages[index],
+                            profileState.avatarBytes,
+                          );
+                        },
+                      ),
+                    ),
+                    if (state.isLoading) _buildLoadingIndicator(),
+                    _buildInputBar(context, state.isLoading),
+                  ],
+                ),
+              );
+            },
           );
         },
       ),
@@ -237,7 +249,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // Builds each chat bubble
-  Widget _buildMessageBubble(ChatMessage message) {
+  Widget _buildMessageBubble(ChatMessage message, Uint8List? avatarBytes) {
     final isUser = message.sender == MessageSender.user;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -298,31 +310,22 @@ class _ChatScreenState extends State<ChatScreen> {
           // User avatar
           if (isUser) ...[
             const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _showAvatarSourcePicker,
-              child: Tooltip(
-                message: 'Change your avatar',
-                child: CircleAvatar(
-                  backgroundColor: Colors.grey,
-                  radius: 14,
-                  backgroundImage:
-                      _userAvatarBytes == null
-                          ? null
-                          : MemoryImage(_userAvatarBytes!),
-                  child:
-                      _userAvatarBytes == null
-                          ? const Icon(
-                            Icons.person,
-                            color: Colors.white,
-                            size: 14,
-                          )
-                          : null,
-                ),
-              ),
-            ),
+            _buildUserAvatar(avatarBytes, radius: 14),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildUserAvatar(Uint8List? avatarBytes, {double radius = 16}) {
+    return CircleAvatar(
+      backgroundColor: Colors.grey,
+      radius: radius,
+      backgroundImage: avatarBytes == null ? null : MemoryImage(avatarBytes),
+      child:
+          avatarBytes == null
+              ? Icon(Icons.person, color: Colors.white, size: radius)
+              : null,
     );
   }
 
