@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:ai_chatbot/data/chat_message_model.dart';
 import 'package:ai_chatbot/presentation/chat_state.dart';
 import 'package:ai_chatbot/utils/message_sender_enum.dart';
@@ -39,14 +41,44 @@ class ChatCubit extends Cubit<ChatState> {
     final userInput = text.trim();
     if (userInput.isEmpty || state.isLoading) return;
 
+    await _sendContent(
+      displayText: userInput,
+      content: Content.text(userInput),
+    );
+  }
+
+  Future<void> sendImage({
+    required Uint8List imageBytes,
+    required String mimeType,
+    String prompt =
+        'Identify the Flutter widget shown in this image. Explain the visual clues you used, describe its likely purpose, and mention any uncertainty. If it is not a Flutter widget, say what it appears to be instead.',
+  }) async {
+    if (state.isLoading) return;
+
+    await _sendContent(
+      displayText: '[Image] $prompt',
+      content: Content.multi([
+        TextPart(prompt),
+        DataPart(mimeType, imageBytes),
+      ]),
+      imageBytes: imageBytes,
+    );
+  }
+
+  Future<void> _sendContent({
+    required String displayText,
+    required Content content,
+    Uint8List? imageBytes,
+  }) async {
     emit(
       state.copyWith(
         messages: [
           ...state.messages,
           ChatMessage(
-            text: userInput,
+            text: displayText,
             sender: MessageSender.user,
             timestamp: DateTime.now(),
+            imageBytes: imageBytes,
           ),
         ],
         isLoading: true,
@@ -54,7 +86,7 @@ class ChatCubit extends Cubit<ChatState> {
     );
 
     try {
-      final response = await _chat.sendMessage(Content.text(userInput));
+      final response = await _chat.sendMessage(content);
       final aiText = response.text ?? 'Sorry, I could not generate a response.';
       emit(
         state.copyWith(

@@ -5,6 +5,7 @@ import 'package:ai_chatbot/utils/message_sender_enum.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:image_picker/image_picker.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -20,8 +21,10 @@ class _ChatScreenState extends State<ChatScreen> {
       return 'API_KEY_NOT_FOUND';
     }
   }
+
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void dispose() {
@@ -33,6 +36,50 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage(BuildContext context) async {
     await context.read<ChatCubit>().sendMessage(_controller.text);
     _controller.clear();
+  }
+
+  Future<void> _pickImage(BuildContext context, ImageSource source) async {
+    final image = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 85,
+      maxWidth: 1600,
+    );
+    if (image == null || !context.mounted) return;
+
+    final imageBytes = await image.readAsBytes();
+    if (!context.mounted) return;
+
+    await context.read<ChatCubit>().sendImage(
+      imageBytes: imageBytes,
+      mimeType: image.mimeType ?? 'image/jpeg',
+    );
+  }
+
+  Future<void> _showImageSourcePicker(BuildContext context) async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Take a photo'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Choose from gallery'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (source != null && context.mounted) {
+      await _pickImage(context, source);
+    }
   }
 
   // Scroll to the latest message automatically
@@ -151,13 +198,30 @@ class _ChatScreenState extends State<ChatScreen> {
                   bottomRight: Radius.circular(isUser ? 4 : 18),
                 ),
               ),
-              child: Text(
-                message.text,
-                style: TextStyle(
-                  color: isUser ? Colors.white : Colors.black87,
-                  fontSize: 15,
-                  height: 1.4,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (message.imageBytes != null) ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.memory(
+                        message.imageBytes!,
+                        width: 280,
+                        height: 190,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      color: isUser ? Colors.white : Colors.black87,
+                      fontSize: 15,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -192,6 +256,12 @@ class _ChatScreenState extends State<ChatScreen> {
       child: SafeArea(
         child: Row(
           children: [
+            IconButton(
+              onPressed:
+                  isLoading ? null : () => _showImageSourcePicker(context),
+              tooltip: 'Identify a widget from an image',
+              icon: const Icon(Icons.image_search),
+            ),
             Expanded(
               child: TextField(
                 controller: _controller,
